@@ -666,12 +666,43 @@ if(wallMat){wallMat.emissiveMap=mkTex(256,256,(g)=>{g.fillStyle='#000';g.fillRec
 const RN=1400,rp=new Float32Array(RN*6),rg=new THREE.BufferGeometry();for(let i=0;i<RN;i++){const x=(Math.random()-.5)*60,y=Math.random()*30,z=(Math.random()-.5)*60;rp.set([x,y,z,x,y-.7,z],i*6)}
 rg.setAttribute('position',new THREE.BufferAttribute(rp,3));const rainM=new THREE.LineSegments(rg,new THREE.LineBasicMaterial({color:0xaabbcc,transparent:true,opacity:.45,fog:false}));rainM.visible=false;rainM.frustumCulled=false;scene.add(rainM);
 let raining=false;const togRain=()=>{raining=!raining;rainM.visible=raining;toast(raining?'🌧 باران':'☀️ بارون قطع شد',1500)};mkBtn('🌧 باران',242,togRain);addEventListener('keydown',e=>{if(e.code==='KeyR')togRain()});
-function extra(dt){
+function extra(dt){mpTick(dt);
  if(wallMat)wallMat.emissiveIntensity=(1-THREE.MathUtils.smoothstep(Math.sin(dayT*6.2832),-.12,.28))*.9;
  scene.fog.near+=((raining?40:300)-scene.fog.near)*Math.min(1,dt*2);scene.fog.far+=((raining?800:2100)-scene.fog.far)*Math.min(1,dt*2);
  if(raining){rainM.position.set(camera.position.x,0,camera.position.z);const a=rg.attributes.position.array;for(let i=0;i<RN;i++){let y=a[i*6+1]-dt*30;if(y<0)y+=30;a[i*6+1]=y;a[i*6+4]=y-.7}rg.attributes.position.needsUpdate=true}
  if(!onFoot&&Math.abs(speed)>.5)for(const p of lampPos){const dx=pos.x-p[0],dz=pos.z-p[1],d=Math.hypot(dx,dz);if(d<1.7){const k=(1.7-d)/(d||1);pos.x+=dx*k;pos.z+=dz*k;if(Math.abs(speed)>6)shake=Math.max(shake,.3);speed*=.5}}
 }
+
+/* ===== multiplayer via room capability ===== */
+const mp={room:null,unsub:null,name:'بازیکن '+(10+Math.floor(Math.random()*90)),remote:new Map(),t:0,last:''};
+const mpPanel=document.createElement('div');mpPanel.style.cssText='position:fixed;left:140px;top:100px;z-index:13;display:none;background:#101c22f2;border:1px solid #ffffff44;border-radius:12px;padding:10px;color:#fff;font:12px Tahoma;width:210px;direction:rtl';
+mpPanel.innerHTML='<div style="font-weight:bold;margin-bottom:6px">🎮 بازی دو نفره</div><input id="mpN" placeholder="اسم تو" style="width:100%;margin-bottom:6px;box-sizing:border-box"><input id="mpC" placeholder="کد اتاق (مثلا khomeyn1)" style="width:100%;margin-bottom:6px;box-sizing:border-box"><button id="mpJ" style="width:100%;padding:7px">وصل شو</button><div id="mpS" style="margin-top:6px;opacity:.9"></div>';
+document.body.appendChild(mpPanel);for(const v of['keydown','keyup'])mpPanel.addEventListener(v,e=>e.stopPropagation());
+const mpS=t=>{document.getElementById('mpS').textContent=t};
+mkBtn('🎮 دو نفره',0,()=>{mpPanel.style.display=mpPanel.style.display==='block'?'none':'block'});
+async function mpJoin(code){try{const lobby=window.claude&&await window.claude.use('room');if(!lobby){mpS('اتصال ممکن نیست؛ لینک باید برای دوستت هم باز شده باشه');return}
+ try{mp.unsub&&mp.unsub();mp.room&&mp.room!==lobby&&mp.room.leave&&mp.room.leave()}catch(e){}
+ for(const r of mp.remote.values())scene.remove(r.car,r.man,r.tag);mp.remote.clear();
+ mp.room=lobby;mp.code=code;mp.last='';mp.unsub=lobby.onPeers(mpPeers,e=>mpS('خطا: '+e.code));mpPeers({peers:lobby.peers()});mpS(code?'وصل شدی به اتاق '+code:'وصل شدی به اتاق عمومی')}catch(e){mpS('خطا: '+((e&&(e.code||e.message))||'نامشخص'))}}
+document.getElementById('mpJ').onclick=()=>{mp.name=document.getElementById('mpN').value.trim().slice(0,14)||mp.name;mpJoin(document.getElementById('mpC').value.trim().toLowerCase().replace(/[^a-z0-9_.-]/g,'').slice(0,40))};
+setTimeout(()=>mpJoin(''),1500);
+function mpTag(txt){const c=document.createElement('canvas');c.width=256;c.height=64;const g=c.getContext('2d');g.fillStyle='#000a';g.fillRect(0,8,256,48);g.fillStyle='#fff';g.font='bold 28px Tahoma';g.textAlign='center';g.fillText(txt,128,43);const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:t,depthTest:false,transparent:true,fog:false}));sp.scale.set(4,1,1);sp.renderOrder=10;return sp}
+function mpCar(i,col){const g=models[Math.max(0,i-1)].clone(true);g.visible=true;g.traverse(o=>{if(o.material){o.material=Array.isArray(o.material)?o.material.map(m=>m.clone()):o.material.clone();for(const m of [].concat(o.material))if(m.clearcoat&&m.roughness===.25)m.color.setHex(col)}});g.userData={};scene.add(g);return g}
+function mpPeers(ch){const seen=new Set();for(const p of ch.peers){const d=p.presence;if(p.isMe||!d||!Array.isArray(d.c)||(d.r||'')!==(mp.code||''))continue;seen.add(p.peer);let r=mp.remote.get(p.peer);
+  if(!r){r={car:null,man:man.clone(true),tag:null,m:-1,n:'',tgt:null,fresh:true};r.man.visible=false;scene.add(r.man);mp.remote.set(p.peer,r)}
+  if(r.m!==d.m||r.k!==d.k){if(r.car)scene.remove(r.car);r.car=mpCar(+d.m||0,+d.k||0xcc3333);r.m=d.m;r.k=d.k;r.fresh=true}
+  if(r.n!==d.n){if(r.tag)scene.remove(r.tag);r.n=String(d.n||'رفیق').slice(0,14);r.tag=mpTag(r.n);scene.add(r.tag)}
+  r.tgt=d}
+ for(const [k,r] of mp.remote)if(!seen.has(k)){scene.remove(r.car,r.man,r.tag);mp.remote.delete(k)}
+ mpS(mp.remote.size?('بازیکن‌های آنلاین: '+mp.remote.size):'منتظر دوستت…')}
+const wrapA=a=>Math.atan2(Math.sin(a),Math.cos(a));
+function mpTick(dt){mp.t+=dt;
+ if(mp.room&&mp.t>.1){mp.t=0;const st={c:[+car.position.x.toFixed(2),+car.position.z.toFixed(2),+car.rotation.y.toFixed(3)],f:onFoot?[+fp.x.toFixed(2),+fp.z.toFixed(2),+fp.yaw.toFixed(3)]:0,m:mi,n:mp.name,k:PCOL[pc][1],r:mp.code||''},j=JSON.stringify(st);if(j!==mp.last){mp.last=j;try{mp.room.presence(st).catch(()=>{})}catch(e){}}}
+ const k=1-Math.exp(-dt*10);for(const r of mp.remote.values()){const t=r.tgt;if(!t||!r.car)continue;const kk=r.fresh?1:k;r.fresh=false;
+  r.car.position.set(r.car.position.x+(t.c[0]-r.car.position.x)*kk,car.position.y,r.car.position.z+(t.c[1]-r.car.position.z)*kk);r.car.rotation.y+=wrapA(t.c[2]-r.car.rotation.y)*kk;
+  let ty=r.car.position,th=2.7;
+  if(Array.isArray(t.f)){r.man.visible=true;r.man.position.set(r.man.position.x+(t.f[0]-r.man.position.x)*kk,0,r.man.position.z+(t.f[1]-r.man.position.z)*kk);r.man.rotation.y+=wrapA(t.f[2]-r.man.rotation.y)*kk;ty=r.man.position;th=2.2}else r.man.visible=false;
+  r.tag.position.set(ty.x,th,ty.z)}}
 const clock=new THREE.Clock();let prevSpeed=0,pitch=0,roll=0;const tmpV=new THREE.Vector3(),UD=car.userData;
 function animate(){requestAnimationFrame(animate);if(paused)return;
 let dt=Math.min(clock.getDelta(),.04),f=!onFoot&&(keys.KeyW||keys.ArrowUp||keys.PedalGas),b=!onFoot&&(keys.KeyS||keys.ArrowDown||keys.PedalBrake),l=!onFoot&&(keys.KeyA||keys.ArrowLeft),r=!onFoot&&(keys.KeyD||keys.ArrowRight);
